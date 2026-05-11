@@ -1,0 +1,235 @@
+{
+  "tools": [
+    {
+      "name": "calculate_end_of_service",
+      "description": "Computes the statutory end-of-service award (مكافأة نهاية الخدمة) under Articles 84-88 of the Saudi Labor Law. Use this for any termination scenario where EOS is owed. The function applies the tiered formula (half-month per year for the first 5 years, full month for years thereafter), prorates partial years, and applies the legal modifiers based on termination reason (full entitlement, two-thirds, one-third, or none) per Articles 84-87. Use the 'wage' definition from Article 2: basic wage plus regular allowances paid as part of the wage (typically housing and transport allowances if fixed and recurring). Do not include irregular bonuses, overtime, or commissions unless they are contractually fixed.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "start_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Employment start date in ISO 8601 (YYYY-MM-DD). Use the Gregorian equivalent if the contract is dated in Hijri."
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Employment end date in ISO 8601 (YYYY-MM-DD)."
+          },
+          "last_wage": {
+            "type": "number",
+            "description": "The last monthly wage in SAR, computed per Article 2 of the Labor Law (basic wage + regular fixed allowances such as housing and transport). Exclude variable components. Must be > 0."
+          },
+          "contract_type": {
+            "type": "string",
+            "enum": ["limited", "unlimited"],
+            "description": "Contract type. 'limited' = fixed-term (محدد المدة), 'unlimited' = indefinite-term (غير محدد المدة)."
+          },
+          "termination_reason": {
+            "type": "string",
+            "enum": [
+              "employer_termination_unlimited",
+              "employer_termination_limited_expiry",
+              "employer_termination_limited_early",
+              "employee_resignation_unlimited",
+              "employee_resignation_limited_early",
+              "article_81_employee_leaving_for_cause",
+              "article_80_dismissal_for_cause",
+              "mutual_agreement",
+              "force_majeure",
+              "retirement",
+              "death",
+              "female_employee_marriage_or_childbirth"
+            ],
+            "description": "The legal reason for termination, which determines the modifier applied to the gross entitlement. 'article_80_dismissal_for_cause' typically yields zero EOS. 'article_81_employee_leaving_for_cause' yields full entitlement. Employee resignation under an unlimited contract follows the tiered modifier in Article 85 (one-third for 2-5 years, two-thirds for 5-10 years, full above 10)."
+          },
+          "calendar": {
+            "type": "string",
+            "enum": ["gregorian", "hijri"],
+            "default": "gregorian",
+            "description": "Calendar in which start_date and end_date are expressed. If 'hijri', the function will convert internally. Service duration for EOS is computed on the actual calendar elapsed, not 365-day approximations."
+          }
+        },
+        "required": ["start_date", "end_date", "last_wage", "contract_type", "termination_reason"]
+      }
+    },
+    {
+      "name": "calculate_gosi_contributions",
+      "description": "Computes monthly GOSI (General Organization for Social Insurance / المؤسسة العامة للتأمينات الاجتماعية) contributions under the Social Insurance Law. Saudi employees: 9% employee + 9% employer for retirement (Annuities Branch), capped at SAR 45,000 monthly contributory wage, plus 0.75% unemployment insurance (SANED) shared equally between employee and employer. Non-Saudi employees: 2% employer-only for the Occupational Hazards Branch with the same SAR 45,000 cap; no annuities and no SANED. Returns a full breakdown. Verify the latest rates and cap with the source documents in the corpus; the function will use the rates current at the version date.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "monthly_contributory_wage": {
+            "type": "number",
+            "description": "The monthly wage subject to GOSI contributions in SAR, defined under the Social Insurance Law (basic wage + housing allowance or its cash equivalent). The function will apply the statutory floor and ceiling."
+          },
+          "nationality": {
+            "type": "string",
+            "enum": ["saudi", "gcc", "non_saudi"],
+            "description": "'saudi' = Saudi national. 'gcc' = GCC national treated as Saudi for GOSI purposes per the GCC Insurance Protection Extension Law. 'non_saudi' = expatriate, subject to Occupational Hazards Branch only."
+          },
+          "include_saned": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to include SANED unemployment insurance. Applies only to Saudi/GCC employees. Default true."
+          },
+          "as_of_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Optional. The date for which contributions are being computed. Used to apply the correct rates if rates have changed historically. Defaults to today."
+          }
+        },
+        "required": ["monthly_contributory_wage", "nationality"]
+      }
+    },
+    {
+      "name": "calculate_notice_period",
+      "description": "Computes the statutory notice period and any payment-in-lieu under Articles 75 and 76 of the Labor Law. For unlimited-term contracts: 60 days' notice if the worker is paid monthly, 30 days otherwise. For limited-term contracts: no notice required if terminated at expiry; if terminated early without cause, the terminating party owes the remaining contract wages (subject to the rules in Article 77).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "contract_type": {
+            "type": "string",
+            "enum": ["limited", "unlimited"]
+          },
+          "wage_basis": {
+            "type": "string",
+            "enum": ["monthly", "weekly", "daily", "hourly", "piece_rate"],
+            "description": "How the worker is paid. Determines the notice period for unlimited contracts."
+          },
+          "terminating_party": {
+            "type": "string",
+            "enum": ["employer", "employee"],
+            "description": "Who is initiating the termination. Notice period is the same for both, but Article 77 indemnities for early termination of limited contracts differ."
+          },
+          "last_monthly_wage": {
+            "type": "number",
+            "description": "Required if computing payment-in-lieu. The 'wage' as defined in Article 2."
+          },
+          "remaining_contract_days": {
+            "type": "integer",
+            "description": "For limited contracts terminated early, the number of days remaining on the contract. Used to compute Article 77 indemnity."
+          }
+        },
+        "required": ["contract_type", "wage_basis", "terminating_party"]
+      }
+    },
+    {
+      "name": "calculate_annual_leave",
+      "description": "Computes statutory annual leave entitlement and the cash value of accrued/unused leave under Articles 109-111 of the Labor Law. Entitlement is 21 days per year for workers with less than 5 years of service, and 30 days per year for workers with 5+ years. Leave accrues pro rata from the start date.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "start_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "as_of_date": {
+            "type": "string",
+            "format": "date",
+            "description": "The date as of which to compute entitlement (typically termination date or current date)."
+          },
+          "leave_days_already_taken": {
+            "type": "number",
+            "description": "Total leave days taken during the accrual period under review. Defaults to 0."
+          },
+          "last_wage": {
+            "type": "number",
+            "description": "Last monthly wage in SAR, used to value unused leave for end-of-service payout."
+          }
+        },
+        "required": ["start_date", "as_of_date", "last_wage"]
+      }
+    },
+    {
+      "name": "calculate_overtime",
+      "description": "Computes overtime pay under Articles 107-108 of the Labor Law. Overtime is paid at 150% of the hourly wage. Hours worked on weekly rest days or public holidays are also compensated as overtime at the 150% rate unless the worker is given a compensatory day off. Hourly wage is derived from the monthly wage by dividing by 30 days and the contractual daily hours (typically 8).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "monthly_wage": {
+            "type": "number",
+            "description": "Monthly wage in SAR per Article 2 definition."
+          },
+          "contractual_daily_hours": {
+            "type": "number",
+            "default": 8,
+            "description": "Contractual daily working hours. Typically 8 (or 6 during Ramadan for Muslim workers under Article 98)."
+          },
+          "overtime_hours": {
+            "type": "number",
+            "description": "Total overtime hours worked in the period."
+          },
+          "rest_day_holiday_hours": {
+            "type": "number",
+            "default": 0,
+            "description": "Hours worked on weekly rest days or public holidays, if not compensated with time off."
+          }
+        },
+        "required": ["monthly_wage", "overtime_hours"]
+      }
+    },
+    {
+      "name": "check_nitaqat_compliance",
+      "description": "Returns the Nitaqat (نطاقات) Saudization band (Platinum / High Green / Medium Green / Low Green / Yellow / Red) for an establishment given its sector, size band, and current Saudization ratio. Bands and thresholds vary by economic activity and are updated periodically by HRSD; the function references the current corpus version. Returns the band, the threshold for the next higher band, and the regulatory consequences of the current band.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "economic_activity": {
+            "type": "string",
+            "description": "The HRSD-classified economic activity (e.g., 'retail_food', 'construction_general', 'professional_services_legal'). The function will map to the current Nitaqat activity table."
+          },
+          "total_workforce": {
+            "type": "integer",
+            "description": "Total headcount including Saudis and non-Saudis. Determines the size band."
+          },
+          "saudi_workforce": {
+            "type": "integer",
+            "description": "Number of Saudi national employees, weighted per Nitaqat rules (some categories such as part-time Saudis or Saudis with disabilities receive uplift weights)."
+          }
+        },
+        "required": ["economic_activity", "total_workforce", "saudi_workforce"]
+      }
+    },
+    {
+      "name": "retrieve_legal_provisions",
+      "description": "Retrieves the text of specific articles or thematically related provisions from the legal corpus (Labor Law, Implementing Regulations, GOSI Law, ministerial decisions). Use this whenever you need to cite or quote a provision. Returns Arabic and English text where both exist, with article number and source metadata.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Either a specific article reference (e.g., 'Labor Law Article 84') or a thematic query (e.g., 'overtime pay rate', 'female worker maternity leave entitlement'). Bilingual queries are supported."
+          },
+          "source_filter": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "labor_law",
+                "labor_law_implementing_regulations",
+                "gosi_law",
+                "gosi_implementing_regulations",
+                "wps_regulations",
+                "nitaqat_rules",
+                "ministerial_decisions"
+              ]
+            },
+            "description": "Optional. Restrict retrieval to specific source documents."
+          },
+          "top_k": {
+            "type": "integer",
+            "default": 5,
+            "description": "Number of chunks to return. Increase for thematic queries; use 1-2 for specific article lookups."
+          },
+          "language": {
+            "type": "string",
+            "enum": ["ar", "en", "both"],
+            "default": "both"
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  ]
+}
